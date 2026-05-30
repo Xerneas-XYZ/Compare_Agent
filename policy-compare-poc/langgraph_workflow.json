@@ -1,0 +1,15 @@
+{ 
+  "name": "policy_compare_workflow", 
+  "description": "Template LangGraph workflow: ingest -> compare -> classify risk -> produce impact summary", 
+  "nodes": [ 
+    {"id":"ingest","type":"http","config":{"endpoint":"/upload/"}}, 
+    {"id":"compare","type":"function","config":{"module":"backend.compare","function":"semantic_compare"}}, 
+    {"id":"classify","type":"llm","config":{"model":"gpt-4o-mini","prompt":"Classify regulatory risk from comparison results"}}, 
+    {"id":"output","type":"http_response"} 
+  ], 
+  "edges": [ 
+    {"from":"ingest","to":"compare"}, 
+    {"from":"compare","to":"classify"}, 
+    {"from":"classify","to":"output"} 
+  ] 
+} 
