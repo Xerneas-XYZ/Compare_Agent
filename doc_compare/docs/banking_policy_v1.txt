@@ -1,0 +1,25 @@
+SAMPLE: Old Banking Policy (USA)
+Version: 1.2 | Effective: Jan 2024
+Issuing Authority: Internal Risk & Compliance
+
+Section 1: Capital Requirements
+Minimum Tier 1 capital ratio: 6.0%
+Total capital ratio: 8.0%
+Leverage ratio: 3.0%
+Reporting cycle: Quarterly
+
+Section 2: AML/KYC Procedures
+Customer Due Diligence (CDD) required for all accounts.
+Enhanced Due Diligence (EDD) for high-risk customers recommended within 30 days.
+Suspicious Activity Reports (SARs) must be filed within 30 calendar days.
+
+Section 3: Data Retention
+Transaction records retained for 5 years.
+Customer identification documents retained for 5 years after account closure.
+
+Section 4: Reporting Obligations
+Quarterly regulatory reports due within 45 days of quarter end.
+Annual stress test results submitted to Federal Reserve by March 31.
+
+Contact: compliance@example-bank.com
+Policy Owner: John Smith, Chief Compliance Officer

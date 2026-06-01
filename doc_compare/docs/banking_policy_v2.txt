@@ -1,0 +1,34 @@
+SAMPLE: Updated Banking Policy (USA)
+Version: 2.0 | Effective: Jan 2025
+Issuing Authority: Internal Risk & Compliance
+
+Section 1: Capital Requirements
+Minimum Tier 1 capital ratio: 8.0% (INCREASED — mandatory compliance by Q2 2025)
+Total capital ratio: 10.5% (INCREASED)
+Leverage ratio: 4.0% (INCREASED)
+Reporting cycle: Monthly (CHANGED from Quarterly)
+
+Section 2: AML/KYC Procedures
+Customer Due Diligence (CDD) required for all accounts.
+Enhanced Due Diligence (EDD) is now mandatory for all high-risk customers within 15 days.
+Failure to complete EDD within deadline results in account suspension.
+Suspicious Activity Reports (SARs) must be filed within 15 calendar days (REDUCED from 30).
+Penalty for late SAR filing: $5,000 per business day.
+
+Section 3: Data Retention
+Transaction records retained for 7 years (INCREASED from 5 years).
+Customer identification documents retained for 7 years after account closure.
+Digital records must be stored in immutable audit trail format per FinCEN guidance.
+
+Section 4: Reporting Obligations
+Monthly regulatory reports due within 20 days of month end (CHANGED).
+Annual stress test results submitted to Federal Reserve by February 15 (CHANGED).
+New: Climate risk disclosures required annually per Federal Reserve SR 22-6.
+
+Section 5: Cybersecurity (NEW)
+All institutions must implement multi-factor authentication.
+Incident reporting to OCC required within 36 hours of material breach.
+Annual penetration testing is mandatory.
+
+Contact: compliance@example-bank.com
+Policy Owner: Jane Doe, Chief Compliance Officer
