@@ -1,0 +1,54 @@
+from pydantic import BaseModel, Field
+from typing import Optional, List, Dict, Union
+from enum import Enum
+
+
+class Link(BaseModel):
+    value: str
+
+
+class CustomPropertyType(Enum):
+    JSON = "JSON"
+    LINK = "LINK"
+    TEXT = "TEXT"
+
+
+class CustomProperty(BaseModel):
+    value: Union[str, Dict]
+    type: CustomPropertyType
+
+    class Config:
+        use_enum_values = True
+
+
+class APIEvent(BaseModel):
+    name: str = Field(..., alias="name")
+    input: str
+    response: str
+    retrieval_context: Optional[List[str]] = Field(
+        None, alias="retrievalContext"
+    )
+    completion_time: Optional[float] = Field(None, alias="completionTime")
+    token_usage: Optional[float] = Field(None, alias="tokenUsage")
+    token_cost: Optional[float] = Field(None, alias="tokenCost")
+    distinct_id: Optional[str] = Field(None, alias="distinctId")
+    conversation_id: Optional[str] = Field(None, alias="conversationId")
+    custom_properties: Optional[Dict[str, CustomProperty]] = Field(
+        None, alias="customProperties"
+    )
+    hyperparameters: Optional[Dict] = Field(None)
+
+    class Config:
+        use_enum_values = True
+
+
+class APIFeedback(BaseModel):
+    provider: str
+    event_id: str = Field(alias="eventId")
+    rating: Optional[int]
+    expected_response: Optional[str] = Field(alias="expectedResponse")
+    explanation: Optional[str] = Field(None)
+
+
+class EventHttpResponse(BaseModel):
+    eventId: str
