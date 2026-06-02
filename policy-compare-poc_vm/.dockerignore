@@ -1,0 +1,7 @@
+pycache 
+.git 
+.venv 
+data 
+dist 
+tests 
+*.pyc 

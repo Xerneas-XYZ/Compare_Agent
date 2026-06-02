@@ -1,0 +1,23 @@
+version: "3.8" 
+
+services: 
+
+  backend: 
+
+    build: . 
+
+    ports: 
+
+      - "8000:8000" 
+
+    volumes: 
+
+      - .:/app 
+
+    environment: 
+
+      - DATABASE_URL=sqlite:///./data/demo.db 
+
+      - SECRET_KEY=demo-secret-key-change-me 
+
+      - OPENAI_API_KEY= 

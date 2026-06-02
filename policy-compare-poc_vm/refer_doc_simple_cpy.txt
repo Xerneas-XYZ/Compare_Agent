@@ -1,0 +1,63 @@
+
+
+Save as scripts/build_archive.sh and make executable (chmod +x scripts/build_archive.sh). It runs tests, builds the Docker image (optional), and produces both .tar.gz and .zip archives named with repo and commit info. 
+
+ 
+
+
+GitHub Actions CI workflow (tests + Docker build + archive artifact) 
+
+Save as .github/workflows/ci.yml. It runs on push and pull_request, installs deps, runs tests, builds Docker image, and uploads the archive artifact. If CR_PAT or GITHUB_TOKEN and REGISTRY are provided, it will push the image. 
+
+
+ 
+
+Optional: helper script to push image to ECR (copyable) 
+
+Save as scripts/push_ecr.sh. Use when deploying to AWS ECR from CI or locally. Requires AWS CLI configured. 
+
+
+
+CI secrets and recommended repo files 
+
+Secrets used by the workflow (set in GitHub repo Settings → Secrets): 
+
+GITHUB_TOKEN (automatically provided by GitHub; used for pushing to GHCR) 
+
+(Optional) CR_PAT or other registry token if pushing to external registry 
+
+Add these repo files if not present: 
+
+.dockerignore 
+
+
+
+.gitignore 
+
+
+
+How to run locally (quick checklist) 
+
+Ensure Docker and Python 3.11 are installed. 
+
+Make scripts executable: 
+
+chmod +x scripts/build_archive.sh scripts/push_ecr.sh 
+
+Run tests and create archives locally: 
+
+./scripts/build_archive.sh 
+
+ 
+
+Build and run with Docker Compose: 
+
+docker-compose up --build 
+
+Run Streamlit UI: 
+
+streamlit run streamlit_app.py 
+
+ 
+
+ 

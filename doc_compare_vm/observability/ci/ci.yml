@@ -1,0 +1,144 @@
+name: CI — DocCompare Agent
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  PYTHON_VERSION: "3.11"
+  ECR_BACKEND_REPO: doc-compare-backend
+  ECR_FRONTEND_REPO: doc-compare-frontend
+
+jobs:
+  # ── Lint + Unit Tests ────────────────────────────────────────────────────────
+  test-backend:
+    name: Backend Tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          python -m spacy download en_core_web_sm
+
+      - name: Lint
+        run: |
+          pip install ruff
+          ruff check app/ tests/
+
+      - name: Type check
+        run: |
+          pip install mypy
+          mypy app/ --ignore-missing-imports --no-strict-optional
+
+      - name: Unit tests (no LLM)
+        run: |
+          pytest tests/test_core.py -v --tb=short
+        env:
+          OPENAI_API_KEY: "sk-dummy-for-unit-tests"
+
+  # ── Docker Build ─────────────────────────────────────────────────────────────
+  docker-build:
+    name: Docker Build (smoke test)
+    runs-on: ubuntu-latest
+    needs: test-backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build backend image
+        run: |
+          docker build -f infra/docker/Dockerfile.backend -t doc-compare-backend:ci backend/
+
+      - name: Build frontend image
+        run: |
+          docker build -f infra/docker/Dockerfile.frontend -t doc-compare-frontend:ci frontend/
+
+      - name: Smoke test backend
+        run: |
+          docker run -d --name backend-test \
+            -e OPENAI_API_KEY=sk-dummy \
+            -p 8000:8000 \
+            doc-compare-backend:ci
+          sleep 10
+          curl -f http://localhost:8000/api/v1/health || exit 1
+          docker stop backend-test
+
+  # ── DeepEval (only on main) ──────────────────────────────────────────────────
+  eval-rag:
+    name: RAG Quality Evals
+    runs-on: ubuntu-latest
+    needs: docker-build
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install eval deps
+        run: pip install deepeval pytest
+
+      - name: Run DeepEval tests
+        run: pytest observability/evals/test_rag_quality.py -v
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+  # ── Push to ECR (main only) ───────────────────────────────────────────────────
+  deploy-ecr:
+    name: Push to ECR
+    runs-on: ubuntu-latest
+    needs: [test-backend, docker-build]
+    if: github.ref == 'refs/heads/main'
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build & push backend
+        run: |
+          IMAGE="${{ steps.ecr-login.outputs.registry }}/${{ env.ECR_BACKEND_REPO }}"
+          docker build -f infra/docker/Dockerfile.backend -t $IMAGE:latest -t $IMAGE:${{ github.sha }} backend/
+          docker push $IMAGE:latest
+          docker push $IMAGE:${{ github.sha }}
+
+      - name: Build & push frontend
+        run: |
+          IMAGE="${{ steps.ecr-login.outputs.registry }}/${{ env.ECR_FRONTEND_REPO }}"
+          docker build -f infra/docker/Dockerfile.frontend -t $IMAGE:latest -t $IMAGE:${{ github.sha }} frontend/
+          docker push $IMAGE:latest
+          docker push $IMAGE:${{ github.sha }}
+
+      - name: Update ECS service
+        run: |
+          aws ecs update-service \
+            --cluster doc-compare-cluster \
+            --service doc-compare-service \
+            --force-new-deployment \
+            --region ${{ secrets.AWS_REGION }}
