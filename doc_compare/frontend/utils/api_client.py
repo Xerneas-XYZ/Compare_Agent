@@ -211,8 +211,29 @@ class APIClient:
             return None
 
     def _mock_compare(self, old_doc_id, new_doc_id, country, industry, role) -> dict:
-        from app.core.compliance_registry import COMPLIANCE_REGISTRY
-        agency_data = COMPLIANCE_REGISTRY.get(
+        # Inline subset — avoids importing backend modules which would
+        # re-execute frontend/app.py and trigger set_page_config twice
+        _AGENCIES = {
+            ("usa","banking"):    {"agencies":["Federal Reserve","OCC","FDIC","CFPB"],"key_regs":["Dodd-Frank","BSA/AML","GLBA","Basel III"]},
+            ("usa","insurance"):  {"agencies":["NAIC","State DOIs","FIO"],           "key_regs":["ACA","ERISA","McCarran-Ferguson"]},
+            ("usa","healthcare"): {"agencies":["CMS","FDA","OCR","HHS"],             "key_regs":["HIPAA","HITECH","ACA"]},
+            ("uk","banking"):     {"agencies":["PRA","FCA","Bank of England"],       "key_regs":["FSMA 2000","SMCR","PSD2","UK GDPR"]},
+            ("uk","insurance"):   {"agencies":["PRA","FCA"],                         "key_regs":["Solvency II","Consumer Duty","UK GDPR"]},
+            ("uk","healthcare"):  {"agencies":["CQC","MHRA","NHS England"],          "key_regs":["Health & Social Care Act 2012","UK GDPR"]},
+            ("india","banking"):  {"agencies":["RBI","SEBI","FIU-IND"],              "key_regs":["Banking Regulation Act","FEMA","PMLA","Basel III"]},
+            ("india","insurance"):{"agencies":["IRDAI"],                             "key_regs":["Insurance Act 1938","PMLA"]},
+            ("india","healthcare"):{"agencies":["CDSCO","NMC","NABH"],              "key_regs":["Drugs & Cosmetics Act","DPDP Act 2023"]},
+            ("china","banking"):  {"agencies":["PBOC","CBIRC","CSRC"],               "key_regs":["Commercial Banking Law","PIPL","Data Security Law"]},
+            ("china","insurance"):{"agencies":["CBIRC"],                             "key_regs":["Insurance Law of PRC","PIPL"]},
+            ("china","healthcare"):{"agencies":["NMPA","NHC"],                      "key_regs":["Drug Administration Law","PIPL"]},
+            ("russia","banking"): {"agencies":["Bank of Russia (CBR)"],              "key_regs":["Federal Law on Banks","AML/CFT Law 115-FZ"]},
+            ("russia","insurance"):{"agencies":["Bank of Russia (CBR)"],             "key_regs":["Law on Insurance Business","CBR Regulations"]},
+            ("russia","healthcare"):{"agencies":["Roszdravnadzor"],                  "key_regs":["Federal Law 323-FZ","Personal Data Law 152-FZ"]},
+            ("germany","banking"):{"agencies":["BaFin","Bundesbank","ECB"],          "key_regs":["KWG","MiFID II","Basel III","GDPR","DORA"]},
+            ("germany","insurance"):{"agencies":["BaFin"],                           "key_regs":["VAG","Solvency II","IDD","GDPR"]},
+            ("germany","healthcare"):{"agencies":["BfArM","GKV-SV"],                "key_regs":["SGB V","GDPR","MDR 2017/745"]},
+        }
+        agency_data = _AGENCIES.get(
             (country.lower(), industry.lower()),
             {"agencies": ["Demo Agency"], "key_regs": ["Demo Regulation"]}
         )

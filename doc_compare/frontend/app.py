@@ -2,6 +2,15 @@
 Document Comparison Agent — Streamlit UI
 WCAG 2.1 AA compliant, keyboard navigable, screen-reader friendly.
 """
+import sys
+from pathlib import Path
+
+# Ensure the frontend directory is on sys.path regardless of where
+# `streamlit run` is invoked from (project root, parent dir, etc.)
+_HERE = Path(__file__).resolve().parent
+if str(_HERE) not in sys.path:
+    sys.path.insert(0, str(_HERE))
+
 import streamlit as st
 import json
 
