@@ -333,12 +333,14 @@ config = render_sidebar()
 client = APIClient(base_url=config["api_url"])
 
 # If country/industry/role/language changed, discard previous comparison result
-# so the user is never shown analysis from a different jurisdiction or language
+# Rerun immediately so stale results never render on screen
 _config_sig = (config["country"], config["industry"], config["role"], config["language"])
 if st.session_state._last_config is not None and st.session_state._last_config != _config_sig:
     st.session_state.comparison_result = None
     st.session_state.session_id = None
     st.session_state.chat_history = []
+    st.session_state._last_config = _config_sig
+    st.rerun()
 st.session_state._last_config = _config_sig
 
 # Probe backend once per session; auto-enables mock if unreachable
