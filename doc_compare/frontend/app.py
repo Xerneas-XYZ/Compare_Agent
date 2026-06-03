@@ -285,6 +285,7 @@ _DEFAULTS = {
     "session_id": None, "comparison_result": None,
     "chat_history": [], "upload_error": None,
     "last_announcement": "",
+    "_last_config": None,   # tracks country/industry/role/language for invalidation
 }
 for k, v in _DEFAULTS.items():
     if k not in st.session_state:
@@ -330,6 +331,16 @@ def _step_indicator():
 # ── Layout ────────────────────────────────────────────────────────────────────
 config = render_sidebar()
 client = APIClient(base_url=config["api_url"])
+
+# If country/industry/role/language changed, discard previous comparison result
+# so the user is never shown analysis from a different jurisdiction or language
+_config_sig = (config["country"], config["industry"], config["role"], config["language"])
+if st.session_state._last_config is not None and st.session_state._last_config != _config_sig:
+    st.session_state.comparison_result = None
+    st.session_state.session_id = None
+    st.session_state.chat_history = []
+st.session_state._last_config = _config_sig
+
 # Probe backend once per session; auto-enables mock if unreachable
 if "_backend_probed" not in st.session_state:
     st.session_state._backend_probed = True
@@ -412,32 +423,6 @@ if st.session_state.old_doc_id and st.session_state.new_doc_id:
             )
     st.markdown("</section>", unsafe_allow_html=True)
 
-# ── Results tabs ──────────────────────────────────────────────────────────────
-if st.session_state.comparison_result:
-    result = st.session_state.comparison_result
-    tabs = st.tabs([
-        "📊 Diff Viewer",
-        "⚖️ Regulatory Impact",
-        "💬 Ask Questions",
-        "📤 Export",
-    ])
-
-    with tabs[0]:
-        render_diff_viewer(result, config["risk_filter"])
-
-    with tabs[1]:
-        render_impact_panel(result)
-
-    with tabs[2]:
-        _render_qa_tab(client, result, config)
-
-    with tabs[3]:
-        _render_export_tab(client, result)
-
-st.markdown("</main>", unsafe_allow_html=True)
-
-
-# ── QA tab (defined after usage — Streamlit executes top-to-bottom, fine) ────
 def _render_qa_tab(client, result, config):
     st.markdown(
         '<section aria-label="Question and answer">',
@@ -571,3 +556,29 @@ def _render_export_tab(client, result):
         )
 
     st.markdown("</section>", unsafe_allow_html=True)
+
+# ── Results tabs ──────────────────────────────────────────────────────────────
+if st.session_state.comparison_result:
+    result = st.session_state.comparison_result
+    tabs = st.tabs([
+        "📊 Diff Viewer",
+        "⚖️ Regulatory Impact",
+        "💬 Ask Questions",
+        "📤 Export",
+    ])
+
+    with tabs[0]:
+        render_diff_viewer(result, config["risk_filter"])
+
+    with tabs[1]:
+        render_impact_panel(result)
+
+    with tabs[2]:
+        _render_qa_tab(client, result, config)
+
+    with tabs[3]:
+        _render_export_tab(client, result)
+
+st.markdown("</main>", unsafe_allow_html=True)
+
+st.markdown("</main>", unsafe_allow_html=True)
