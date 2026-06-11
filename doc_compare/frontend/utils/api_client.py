@@ -208,10 +208,10 @@ class APIClient:
             return self._mock_upload(file)
         try:
             resp = self.session.post(
-                f"{self.base_url}/api/v1/upload",
+                f"{self.base_url}/api/v1/upload/",
                 files={"file": (file.name, file.getvalue(),
                                 file.type or "application/octet-stream")},
-                timeout=60,
+                timeout=120,
             )
             if resp.status_code == 400:
                 self.last_error = "Unsupported file type. Accepted: PDF, TXT, CSV, JSON, DOCX, XLSX, PPTX."
@@ -226,6 +226,12 @@ class APIClient:
             data = resp.json()
             self.last_upload_meta = data
             return data["doc_id"]
+        except requests.ReadTimeout:
+            self.last_error = (
+                "Upload timed out after 120 seconds. "
+                "The backend may be busy or the file is large. Try again or reduce file size."
+            )
+            return None
         except requests.ConnectionError:
             self._mock = True
             return self._mock_upload(file)

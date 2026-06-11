@@ -18,6 +18,7 @@ MAX_BYTES = settings.MAX_FILE_SIZE_MB * 1024 * 1024
 
 
 @router.post("/upload", summary="Upload a document for comparison")
+@router.post("/upload/", summary="Upload a document for comparison (trailing slash)")
 async def upload_document(file: UploadFile = File(...)):
     ext = Path(file.filename or "").suffix.lower()
     if ext not in settings.ALLOWED_EXTENSIONS:
@@ -35,6 +36,8 @@ async def upload_document(file: UploadFile = File(...)):
         raise HTTPException(422, "Document appears to be empty or could not extract text")
 
     doc_id = str(uuid.uuid4())
+    # Log receipt for easier debugging of upload/timeouts
+    logger.info(f"Received upload: filename={file.filename} size={len(content)} bytes")
     store_doc(doc_id, {
         "doc_id": doc_id,
         "filename": file.filename,

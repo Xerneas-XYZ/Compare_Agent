@@ -9,16 +9,17 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 import time, logging
 
-from app.api import compare, upload, export, health
+from app.api import compare, upload, export
+import health 
 from app.core.config import settings
-from app.core.tracing import init_tracer
+# from app.core.tracing import init_tracer
 
 logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    init_tracer()
+    # init_tracer()
     logger.info("DocCompare Agent started")
     yield
     logger.info("DocCompare Agent shutting down")
