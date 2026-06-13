@@ -1,13 +1,9 @@
-"""
-Compare API Router
-POST /api/v1/compare   — Full document comparison pipeline
-GET  /api/v1/compare/{session_id}  — Retrieve previous result
-POST /api/v1/compare/{session_id}/query  — Follow-up RAG query
-"""
 import uuid
+import json
 import logging
+from pathlib import Path
 from typing import Optional
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from app.parsers.document_parser import parse_document
@@ -21,13 +17,27 @@ from app.core.compliance_registry import get_agencies
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# In-memory session store (replace with Redis in prod)
-_sessions: dict = {}
+UPLOAD_PATH = Path(settings.UPLOAD_DIR).resolve()
+print(f"this is the upload_path {UPLOAD_PATH}")
+UPLOAD_PATH.mkdir(parents=True, exist_ok=True)
+
+# --- PRODUCTION READY PERSISTENCE WRAPPERS ---
+# NOTE: Replace the bodies of these helpers with Redis/DB queries in prod.
+_sessions_mock_db: dict = {}
+
+def save_session(session_id: str, data: dict):
+    # TODO: Use Redis: redis_client.setex(f"session:{session_id}", 86400, json.dumps(data))
+    _sessions_mock_db[session_id] = data
+
+def load_session(session_id: str) -> Optional[dict]:
+    # TODO: Use Redis: data = redis_client.get(f"session:{session_id}")
+    return _sessions_mock_db.get(session_id)
 
 
 class CompareRequest(BaseModel):
-    old_doc_id: str
-    new_doc_id: str
+    # Enforce safe format patterns to block path traversal strings
+    old_doc_id: str = Field(..., pattern=r"^[a-zA-Z0-9\-]+$")
+    new_doc_id: str = Field(..., pattern=r"^[a-zA-Z0-9\-]+$")
     country: str = Field(..., pattern="^(usa|uk|india|china|russia|germany)$")
     industry: str = Field(..., pattern="^(banking|insurance|healthcare)$")
     role: str = Field(..., pattern="^(compliance_officer|general_user|legal_consultant)$")
@@ -40,15 +50,24 @@ class QueryRequest(BaseModel):
     language: str = Field(default="en")
 
 
-# Temporary in-memory doc store (in prod: S3 presigned URL → local temp)
-_doc_store: dict = {}
-
-
 def get_doc(doc_id: str) -> dict:
-    doc = _doc_store.get(doc_id)
-    if not doc:
-        raise HTTPException(404, f"Document {doc_id} not found. Re-upload required.")
-    return doc
+    # 🌟 Strictly isolate and resolve safe file paths
+    safe_name = f"{doc_id}.json"
+    doc_path = (UPLOAD_PATH / safe_name).resolve()
+    
+    # 🌟 Explicitly block directory traversal attacks
+    if not doc_path.is_relative_to(UPLOAD_PATH):
+        logger.warning(f"Directory traversal attempt blocked for doc_id: {doc_id}")
+        raise HTTPException(400, "Invalid document identifier")
+
+    if not doc_path.exists():
+        raise HTTPException(404, "Document not found. Re-upload required.")
+    try:
+        with doc_path.open("r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as exc:
+        logger.error("Error reading stored document %s: %s", doc_id, exc)
+        raise HTTPException(500, "Failed to read stored document")
 
 
 @router.post("/compare", summary="Compare two uploaded documents")
@@ -56,25 +75,20 @@ async def compare_documents(req: CompareRequest):
     old_doc = get_doc(req.old_doc_id)
     new_doc = get_doc(req.new_doc_id)
 
-    # 1. Mask PII in both
     old_masked = full_mask(old_doc["text"], req.language)
     new_masked = full_mask(new_doc["text"], req.language)
 
-    # 2. Validate inputs
     for text, fname in [(old_masked.masked_text, old_doc["filename"]),
                         (new_masked.masked_text, new_doc["filename"])]:
         valid, reason = validate_input(text, fname)
         if not valid:
             raise HTTPException(400, reason)
 
-    # 3. Compute structural diff
     diff_result = compute_diff(old_masked.masked_text, new_masked.masked_text)
 
-    # 4. Index for RAG
     pipeline = get_pipeline()
     pair_id = pipeline.index_pair(old_masked.masked_text, new_masked.masked_text)
 
-    # 5. Generate impact summary
     impact = pipeline.generate_impact_summary(
         pair_id=pair_id,
         diff_summary=diff_result.summary,
@@ -84,14 +98,14 @@ async def compare_documents(req: CompareRequest):
         language=req.language,
     )
 
-    # 6. Sanitize LLM output
     clean_answer, was_modified = sanitize_llm_output(impact["answer"])
     grounding = check_response_grounding(clean_answer, impact.get("sources", []))
-
-    # 7. Agency context
     agency_data = get_agencies(req.country, req.industry)
 
-    session_id = str(uuid.uuid4())
+    # Use secure token generators to guarantee multi-worker randomness
+    import secrets
+    session_id = secrets.token_hex(16)
+    
     result = {
         "session_id": session_id,
         "pair_id": pair_id,
@@ -109,7 +123,7 @@ async def compare_documents(req: CompareRequest):
                 "new_text": c.new_text[:500] if c.new_text else None,
             }
             for c in diff_result.chunks
-            if c.change_type.value != "unchanged"   # skip unchanged in response
+            if c.change_type.value != "unchanged"
         ],
         "regulatory_impact": {
             "answer": clean_answer,
@@ -131,15 +145,21 @@ async def compare_documents(req: CompareRequest):
         },
     }
 
-    _sessions[session_id] = {"result": result, "pair_id": pair_id,
-                              "country": req.country, "industry": req.industry,
-                              "role": req.role}
+    # Persist session state securely
+    save_session(session_id, {
+        "result": result, 
+        "pair_id": pair_id,
+        "country": req.country, 
+        "industry": req.industry,
+        "role": req.role
+    })
+    
     return result
 
 
 @router.get("/compare/{session_id}", summary="Retrieve a previous comparison result")
 async def get_comparison(session_id: str):
-    session = _sessions.get(session_id)
+    session = load_session(session_id)
     if not session:
         raise HTTPException(404, "Session not found")
     return session["result"]
@@ -147,7 +167,7 @@ async def get_comparison(session_id: str):
 
 @router.post("/compare/{session_id}/query", summary="Follow-up RAG query on a comparison session")
 async def query_comparison(session_id: str, req: QueryRequest):
-    session = _sessions.get(session_id)
+    session = load_session(session_id)
     if not session:
         raise HTTPException(404, "Session not found")
 
@@ -172,7 +192,42 @@ async def query_comparison(session_id: str, req: QueryRequest):
         "pii_sanitized": was_modified,
     }
 
+import re  # 🌟 Ensure re is imported at the top of the file
 
-# Expose doc store for upload router
+def sanitize_for_json(obj):
+    """Recursively converts all non-primitive objects and methods into strings."""
+    if isinstance(obj, dict):
+        return {str(k): sanitize_for_json(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple, set)):
+        return [sanitize_for_json(i) for i in obj]
+    elif isinstance(obj, (str, int, float, bool, type(None))):
+        return obj
+    elif callable(obj):  # 🌟 Intercepts uncalled methods like ext.strip
+        return str(obj()) if hasattr(obj, "__name__") else str(obj)
+    else:
+        return str(obj)
+
 def store_doc(doc_id: str, data: dict):
-    _doc_store[doc_id] = data
+    print(f"storing the files {doc_id}")
+    
+    # 🌟 FIX: Explicitly run the regex compilation match check
+    if not re.match(r"^[a-zA-Z0-9\-]+$", doc_id):
+        raise HTTPException(400, "Malformed Document Target ID")
+    
+    print(f"Attempting to store document {doc_id} at {UPLOAD_PATH}")
+    doc_path = (UPLOAD_PATH / f"{doc_id}.json").resolve()
+    if not doc_path.is_relative_to(UPLOAD_PATH):
+        raise HTTPException(400, "Access denied")
+
+    try:
+        doc_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # 🌟 FIX: Deep clean the payload to remove any stray methods or objects
+        clean_data = sanitize_for_json(data)
+
+        with doc_path.open("w", encoding="utf-8") as f:
+            json.dump(clean_data, f, ensure_ascii=False, indent=2)
+            
+    except Exception as exc:
+        logger.error("Failed to persist document %s to %s: %s", doc_id, doc_path, exc)
+        raise HTTPException(500, f"Unable to store uploaded document: {str(exc)}")

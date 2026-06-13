@@ -7,19 +7,30 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
-import time, logging
+import time, logging, os, random, sys, pathlib
 
 from app.api import compare, upload, export
 import health 
 from app.core.config import settings
-# from app.core.tracing import init_tracer
+
+# Ensure local `backend` and `doc_compare` packages are importable
+BACKEND_DIR = pathlib.Path(__file__).resolve().parent
+ROOT_DIR = BACKEND_DIR.parent
+if str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+from observability.tracing.tracing import init_tracer
 
 logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # init_tracer()
+    init_tracer()
+    # 🌟 Crucial: Force re-seeding the PRNG after an OS fork
+    random.seed(os.urandom(4)) 
     logger.info("DocCompare Agent started")
     yield
     logger.info("DocCompare Agent shutting down")

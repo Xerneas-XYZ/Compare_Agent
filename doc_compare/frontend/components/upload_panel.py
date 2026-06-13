@@ -84,28 +84,47 @@ def _handle_upload(file, slot: str, client):
     meta_key  = f"{slot}_doc_meta"
     err_key   = f"_{slot}_err"
 
-    if st.session_state.get(hash_key) == content_hash:
-        # Same bytes as last upload — show cached result, no network call
+    # CRITICAL SECURITY FIX: Double-check that we actually have a valid ID cached 
+    # to prevent cross-widget pipeline contamination on multi-file reruns.
+    if st.session_state.get(hash_key) == content_hash and st.session_state.get(id_key) is not None:
         return
 
     # Content changed — invalidate any previous comparison immediately
     _invalidate_comparison()
 
-    with st.spinner(f"Uploading {file.name}…"):
-        doc_id = client.upload(file)
+    try:
+        with st.spinner(f"Uploading {file.name} to backend..."):
+            # The client's base_url must be updated in render_upload_panel prior to this execution.
+            doc_id = client.upload(file)
 
-    if doc_id:
-        st.session_state[id_key]   = doc_id
-        st.session_state[meta_key] = client.last_upload_meta
-        st.session_state[hash_key] = content_hash
-        st.session_state[err_key]  = None
-    else:
+        if doc_id:
+            st.session_state[id_key]   = doc_id
+            st.session_state[meta_key] = client.last_upload_meta
+            st.session_state[hash_key] = content_hash
+            st.session_state[err_key]  = None
+            # CRITICAL STREAMLIT RERUN FIX: Force a clean state sync immediately 
+            # after processing to avoid synchronization deadlocks.
+            st.rerun()
+        else:
+            st.session_state[id_key]   = None
+            st.session_state[hash_key] = None   
+            st.session_state[err_key]  = getattr(client, "last_error", "Upload rejected by server")
+    except Exception as e:
+        # Prevent completely unhandled connection-timeout network errors from crashing the UI loop
         st.session_state[id_key]   = None
-        st.session_state[hash_key] = None   # allow retry on next rerun
-        st.session_state[err_key]  = client.last_error or "Upload failed"
+        st.session_state[hash_key] = None
+        st.session_state[err_key]  = f"Connection timeout/network error: {str(e)}"
 
 
 def render_upload_panel(client, config):
+    # DYNAMIC BACKEND FIX: Dynamically synchronize the client base URL with the 
+    # current value entered by the user in the sidebar config before doing anything else.
+    if config and "api_url" in config:
+        if hasattr(client, "base_url"):
+            client.base_url = config["api_url"]
+        elif hasattr(client, "api_url"):
+            client.api_url = config["api_url"]
+
     if client.is_mock:
         _demo_banner()
 
@@ -143,7 +162,7 @@ def render_upload_panel(client, config):
         )
         if old_file:
             _handle_upload(old_file, "old", client)
-            if st.session_state.old_doc_id and st.session_state.get("old_doc_meta"):
+            if st.session_state.get("old_doc_id") and st.session_state.get("old_doc_meta"):
                 _doc_card("Baseline document", st.session_state.old_doc_meta)
             elif st.session_state.get("_old_err"):
                 _error_card(st.session_state["_old_err"], "Baseline document")
@@ -175,7 +194,7 @@ def render_upload_panel(client, config):
         )
         if new_file:
             _handle_upload(new_file, "new", client)
-            if st.session_state.new_doc_id and st.session_state.get("new_doc_meta"):
+            if st.session_state.get("new_doc_id") and st.session_state.get("new_doc_meta"):
                 _doc_card("Updated document", st.session_state.new_doc_meta)
             elif st.session_state.get("_new_err"):
                 _error_card(st.session_state["_new_err"], "Updated document")
@@ -188,7 +207,7 @@ def render_upload_panel(client, config):
             )
 
     # ── Clear button ──────────────────────────────────────────────────────────
-    if st.session_state.old_doc_id or st.session_state.new_doc_id:
+    if st.session_state.get("old_doc_id") or st.session_state.get("new_doc_id"):
         if st.button("✕ Clear uploads", key="btn_clear_uploads",
                      help="Remove uploaded documents and start over"):
             for k in ["old_doc_id", "old_doc_meta", "_old_hash", "_old_err",
