@@ -1,6 +1,8 @@
 import uuid
 import json
 import logging
+import re
+import secrets
 from pathlib import Path
 from typing import Optional
 from fastapi import APIRouter, HTTPException
@@ -18,24 +20,35 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 UPLOAD_PATH = Path(settings.UPLOAD_DIR).resolve()
-print(f"this is the upload_path {UPLOAD_PATH}")
 UPLOAD_PATH.mkdir(parents=True, exist_ok=True)
 
-# --- PRODUCTION READY PERSISTENCE WRAPPERS ---
-# NOTE: Replace the bodies of these helpers with Redis/DB queries in prod.
-_sessions_mock_db: dict = {}
+# --- CACHE DIRECTORY FOR SESSIONS ---
+SESSION_CACHE_PATH = Path("./session_cache").resolve()
+SESSION_CACHE_PATH.mkdir(parents=True, exist_ok=True)
 
 def save_session(session_id: str, data: dict):
-    # TODO: Use Redis: redis_client.setex(f"session:{session_id}", 86400, json.dumps(data))
-    _sessions_mock_db[session_id] = data
+    """Persists session state to disk to survive server reloads and share across workers."""
+    try:
+        session_file = SESSION_CACHE_PATH / f"{session_id}.json"
+        with session_file.open("w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.error(f"Failed to persist session {session_id} to disk: {e}")
 
 def load_session(session_id: str) -> Optional[dict]:
-    # TODO: Use Redis: data = redis_client.get(f"session:{session_id}")
-    return _sessions_mock_db.get(session_id)
+    """Loads session state from disk cache."""
+    session_file = SESSION_CACHE_PATH / f"{session_id}.json"
+    if not session_file.exists():
+        return None
+    try:
+        with session_file.open("r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        logger.error(f"Failed to read session file {session_id}: {e}")
+        return None
 
 
 class CompareRequest(BaseModel):
-    # Enforce safe format patterns to block path traversal strings
     old_doc_id: str = Field(..., pattern=r"^[a-zA-Z0-9\-]+$")
     new_doc_id: str = Field(..., pattern=r"^[a-zA-Z0-9\-]+$")
     country: str = Field(..., pattern="^(usa|uk|india|china|russia|germany)$")
@@ -51,11 +64,9 @@ class QueryRequest(BaseModel):
 
 
 def get_doc(doc_id: str) -> dict:
-    # 🌟 Strictly isolate and resolve safe file paths
     safe_name = f"{doc_id}.json"
     doc_path = (UPLOAD_PATH / safe_name).resolve()
     
-    # 🌟 Explicitly block directory traversal attacks
     if not doc_path.is_relative_to(UPLOAD_PATH):
         logger.warning(f"Directory traversal attempt blocked for doc_id: {doc_id}")
         raise HTTPException(400, "Invalid document identifier")
@@ -102,8 +113,6 @@ async def compare_documents(req: CompareRequest):
     grounding = check_response_grounding(clean_answer, impact.get("sources", []))
     agency_data = get_agencies(req.country, req.industry)
 
-    # Use secure token generators to guarantee multi-worker randomness
-    import secrets
     session_id = secrets.token_hex(16)
     
     result = {
@@ -145,7 +154,7 @@ async def compare_documents(req: CompareRequest):
         },
     }
 
-    # Persist session state securely
+    # Persist session state securely to disk
     save_session(session_id, {
         "result": result, 
         "pair_id": pair_id,
@@ -169,62 +178,80 @@ async def get_comparison(session_id: str):
 async def query_comparison(session_id: str, req: QueryRequest):
     session = load_session(session_id)
     if not session:
-        raise HTTPException(404, "Session not found")
+        raise HTTPException(status_code=404, detail="Session not found")
+        
+    if "pair_id" not in session:
+        raise HTTPException(status_code=500, detail="Session corrupted: Missing pair_id")
 
     pipeline = get_pipeline()
-    result = pipeline.analyze(
-        pair_id=session["pair_id"],
-        question=req.question,
-        country=session["country"],
-        industry=session["industry"],
-        role=session["role"],
-        language=req.language,
-    )
+    
+    try:
+        result = pipeline.analyze(
+            pair_id=session["pair_id"],
+            question=req.question,
+            country=session.get("country", "US"),
+            industry=session.get("industry", "General"),
+            role=session.get("role", "Analyst"),
+            language=getattr(req, "language", "en"),
+        )
+        
+        if "not indexed" in result["answer"]:
+            return {
+                "answer": "Session expired or memory wiped. Please re-run the comparison.",
+                "sources": [],
+                "tokens_used": 0,
+                "grounding_confidence": 0.0,
+                "pii_sanitized": False,
+            }
 
-    clean_answer, was_modified = sanitize_llm_output(result["answer"])
-    grounding = check_response_grounding(clean_answer, result.get("sources", []))
+        clean_answer = result["answer"]
+        was_modified = False
+        confidence = 0.0
+        
+        try:
+            clean_answer, was_modified = sanitize_llm_output(result["answer"])
+            grounding = check_response_grounding(clean_answer, result.get("sources", []))
+            confidence = grounding.get("confidence", 0.0)
+        except Exception as helper_err:
+            logger.warning(f"Helper function failed (returning raw LLM output instead). Error: {helper_err}")
 
-    return {
-        "answer": clean_answer,
-        "sources": result.get("sources", []),
-        "tokens_used": result.get("tokens_used", 0),
-        "grounding_confidence": grounding["confidence"],
-        "pii_sanitized": was_modified,
-    }
+        return {
+            "answer": clean_answer,
+            "sources": result.get("sources", []),
+            "tokens_used": result.get("tokens_used", 0),
+            "grounding_confidence": confidence,
+            "pii_sanitized": was_modified,
+        }
 
-import re  # 🌟 Ensure re is imported at the top of the file
+    except Exception as e:
+        logger.exception("Failed during RAG query pipeline:")
+        raise HTTPException(status_code=500, detail=f"Query failed: {str(e)}")
+
 
 def sanitize_for_json(obj):
-    """Recursively converts all non-primitive objects and methods into strings."""
     if isinstance(obj, dict):
         return {str(k): sanitize_for_json(v) for k, v in obj.items()}
     elif isinstance(obj, (list, tuple, set)):
         return [sanitize_for_json(i) for i in obj]
     elif isinstance(obj, (str, int, float, bool, type(None))):
         return obj
-    elif callable(obj):  # 🌟 Intercepts uncalled methods like ext.strip
+    elif callable(obj):  
         return str(obj()) if hasattr(obj, "__name__") else str(obj)
     else:
         return str(obj)
 
+
 def store_doc(doc_id: str, data: dict):
-    print(f"storing the files {doc_id}")
-    
-    # 🌟 FIX: Explicitly run the regex compilation match check
     if not re.match(r"^[a-zA-Z0-9\-]+$", doc_id):
         raise HTTPException(400, "Malformed Document Target ID")
     
-    print(f"Attempting to store document {doc_id} at {UPLOAD_PATH}")
     doc_path = (UPLOAD_PATH / f"{doc_id}.json").resolve()
     if not doc_path.is_relative_to(UPLOAD_PATH):
         raise HTTPException(400, "Access denied")
 
     try:
         doc_path.parent.mkdir(parents=True, exist_ok=True)
-
-        # 🌟 FIX: Deep clean the payload to remove any stray methods or objects
         clean_data = sanitize_for_json(data)
-
         with doc_path.open("w", encoding="utf-8") as f:
             json.dump(clean_data, f, ensure_ascii=False, indent=2)
             

@@ -128,92 +128,90 @@ def render_upload_panel(client, config):
     if client.is_mock:
         _demo_banner()
 
-    st.markdown(
-        '<section aria-label="Document upload" id="upload-section">',
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:6px;">'
-        '<span style="font-size:0.95rem;font-weight:600;">📁 Upload Documents</span>'
-        '<span style="font-size:0.78rem;color:#8b90a8;">PDF, TXT, CSV, JSON, DOCX, XLSX, PPTX · Max 50 MB</span>'
-        '</div>',
-        unsafe_allow_html=True,
-    )
-
-    col_old, col_new = st.columns(2, gap="medium")
-
-    # ── Old document ──────────────────────────────────────────────────────────
-    with col_old:
+    # FIX: Replaced broken HTML tags with a native Streamlit container
+    with st.container():
         st.markdown(
-            '<p style="font-size:0.88rem;font-weight:600;margin:0 0 2px 0;color:#c8cfe0;">'
-            '📄 Baseline / Old Document</p>',
+            '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:6px;">'
+            '<span style="font-size:0.95rem;font-weight:600;">📁 Upload Documents</span>'
+            '<span style="font-size:0.78rem;color:#8b90a8;">PDF, TXT, CSV, JSON, DOCX, XLSX, PPTX · Max 50 MB</span>'
+            '</div>',
             unsafe_allow_html=True,
         )
-        st.markdown(
-            '<span style="font-size:0.75rem;color:#8b90a8;">Previous version — comparing FROM</span>',
-            unsafe_allow_html=True,
-        )
-        old_file = st.file_uploader(
-            "Upload baseline document",
-            type=_ALLOWED_TYPES,
-            key="old_uploader",
-            help="Previous version of your policy or regulatory document",
-            label_visibility="collapsed",
-        )
-        if old_file:
-            _handle_upload(old_file, "old", client)
-            if st.session_state.get("old_doc_id") and st.session_state.get("old_doc_meta"):
-                _doc_card("Baseline document", st.session_state.old_doc_meta)
-            elif st.session_state.get("_old_err"):
-                _error_card(st.session_state["_old_err"], "Baseline document")
-        else:
+
+        col_old, col_new = st.columns(2, gap="medium")
+
+        # ── Old document ──────────────────────────────────────────────────────────
+        with col_old:
             st.markdown(
-                '<div style="border:2px dashed #2e3245;border-radius:8px;padding:10px 12px;'
-                'background:#1a1d27;font-size:0.78rem;color:#8b90a8;" aria-hidden="true">'
-                '📂 Drag &amp; drop or click Browse above</div>',
+                '<p style="font-size:0.88rem;font-weight:600;margin:0 0 2px 0;color:#c8cfe0;">'
+                '📄 Baseline / Old Document</p>',
                 unsafe_allow_html=True,
             )
-
-    # ── New document ──────────────────────────────────────────────────────────
-    with col_new:
-        st.markdown(
-            '<p style="font-size:0.88rem;font-weight:600;margin:0 0 2px 0;color:#c8cfe0;">'
-            '📄 Updated / New Document</p>',
-            unsafe_allow_html=True,
-        )
-        st.markdown(
-            '<span style="font-size:0.75rem;color:#8b90a8;">Current version — comparing TO</span>',
-            unsafe_allow_html=True,
-        )
-        new_file = st.file_uploader(
-            "Upload updated document",
-            type=_ALLOWED_TYPES,
-            key="new_uploader",
-            help="New or updated version of the document",
-            label_visibility="collapsed",
-        )
-        if new_file:
-            _handle_upload(new_file, "new", client)
-            if st.session_state.get("new_doc_id") and st.session_state.get("new_doc_meta"):
-                _doc_card("Updated document", st.session_state.new_doc_meta)
-            elif st.session_state.get("_new_err"):
-                _error_card(st.session_state["_new_err"], "Updated document")
-        else:
             st.markdown(
-                '<div style="border:2px dashed #2e3245;border-radius:8px;padding:10px 12px;'
-                'background:#1a1d27;font-size:0.78rem;color:#8b90a8;" aria-hidden="true">'
-                '📂 Drag &amp; drop or click Browse above</div>',
+                '<span style="font-size:0.75rem;color:#8b90a8;">Previous version — comparing FROM</span>',
                 unsafe_allow_html=True,
             )
+            
+            # FIX: Removed label_visibility="collapsed" to meet WCAG 2.1 AA requirements
+            old_file = st.file_uploader(
+                "Upload baseline document",
+                type=_ALLOWED_TYPES,
+                key="old_uploader",
+                help="Previous version of your policy or regulatory document",
+            )
+            if old_file:
+                _handle_upload(old_file, "old", client)
+                if st.session_state.get("old_doc_id") and st.session_state.get("old_doc_meta"):
+                    _doc_card("Baseline document", st.session_state.old_doc_meta)
+                elif st.session_state.get("_old_err"):
+                    _error_card(st.session_state["_old_err"], "Baseline document")
+            else:
+                st.markdown(
+                    '<div style="border:2px dashed #2e3245;border-radius:8px;padding:10px 12px;'
+                    'background:#1a1d27;font-size:0.78rem;color:#8b90a8;" aria-hidden="true">'
+                    '📂 Drag &amp; drop or click Browse above</div>',
+                    unsafe_allow_html=True,
+                )
 
-    # ── Clear button ──────────────────────────────────────────────────────────
-    if st.session_state.get("old_doc_id") or st.session_state.get("new_doc_id"):
-        if st.button("✕ Clear uploads", key="btn_clear_uploads",
-                     help="Remove uploaded documents and start over"):
-            for k in ["old_doc_id", "old_doc_meta", "_old_hash", "_old_err",
-                      "new_doc_id", "new_doc_meta", "_new_hash", "_new_err",
-                      "comparison_result", "session_id", "chat_history"]:
-                st.session_state[k] = None if k != "chat_history" else []
-            st.rerun()
+        # ── New document ──────────────────────────────────────────────────────────
+        with col_new:
+            st.markdown(
+                '<p style="font-size:0.88rem;font-weight:600;margin:0 0 2px 0;color:#c8cfe0;">'
+                '📄 Updated / New Document</p>',
+                unsafe_allow_html=True,
+            )
+            st.markdown(
+                '<span style="font-size:0.75rem;color:#8b90a8;">Current version — comparing TO</span>',
+                unsafe_allow_html=True,
+            )
+            
+            # FIX: Removed label_visibility="collapsed" to meet WCAG 2.1 AA requirements
+            new_file = st.file_uploader(
+                "Upload updated document",
+                type=_ALLOWED_TYPES,
+                key="new_uploader",
+                help="New or updated version of the document",
+            )
+            if new_file:
+                _handle_upload(new_file, "new", client)
+                if st.session_state.get("new_doc_id") and st.session_state.get("new_doc_meta"):
+                    _doc_card("Updated document", st.session_state.new_doc_meta)
+                elif st.session_state.get("_new_err"):
+                    _error_card(st.session_state["_new_err"], "Updated document")
+            else:
+                st.markdown(
+                    '<div style="border:2px dashed #2e3245;border-radius:8px;padding:10px 12px;'
+                    'background:#1a1d27;font-size:0.78rem;color:#8b90a8;" aria-hidden="true">'
+                    '📂 Drag &amp; drop or click Browse above</div>',
+                    unsafe_allow_html=True,
+                )
 
-    st.markdown("</section>", unsafe_allow_html=True)
+        # ── Clear button ──────────────────────────────────────────────────────────
+        if st.session_state.get("old_doc_id") or st.session_state.get("new_doc_id"):
+            if st.button("✕ Clear uploads", key="btn_clear_uploads",
+                         help="Remove uploaded documents and start over"):
+                for k in ["old_doc_id", "old_doc_meta", "_old_hash", "_old_err",
+                          "new_doc_id", "new_doc_meta", "_new_hash", "_new_err",
+                          "comparison_result", "session_id", "chat_history"]:
+                    st.session_state[k] = None if k != "chat_history" else []
+                st.rerun()

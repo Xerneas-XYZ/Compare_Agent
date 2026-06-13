@@ -59,13 +59,13 @@ def extract_with_sequential_chunks(file_path: str, ext: str, chunk_size: int = 8
         conv_result = doc_converter.convert(file_path)
         return conv_result.document.export_to_markdown(), total_pages
 
-    logger.info(f"Dense PDF detected ({total_pages} pages). Slicing into safe segments of {chunk_size}...")
+    print(f"Dense PDF detected ({total_pages} pages). Slicing into safe segments of {chunk_size}...")
     combined_markdown = []
 
     # Iterate through the document in ultra-small segments
     for start_page in range(0, total_pages, chunk_size):
         end_page = min(start_page + chunk_size, total_pages)
-        logger.info(f"Extracting layout range safely: pages {start_page} to {end_page}")
+        print(f"Extracting layout range safely: pages {start_page} to {end_page}")
 
         writer = PdfWriter()
         for page_num in range(start_page, end_page):
@@ -91,7 +91,8 @@ def extract_with_sequential_chunks(file_path: str, ext: str, chunk_size: int = 8
 
 @router.post("/upload", summary="Upload a document for comparison")
 async def upload_document(file: UploadFile = File(...)):
-    logger.info(f"Processing single-threaded sequential layout extraction for file: {file.filename}")  
+    print(f"Processing single-threaded sequential layout extraction for file: {file.filename}")
+    print(f"Processing single-threaded sequential layout extraction for file: {file.filename}")  
     
     ext = Path(file.filename or "").suffix.lower()
     if ext not in [".pdf", ".docx"]:

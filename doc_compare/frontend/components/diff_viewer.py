@@ -53,16 +53,30 @@ def _change_label(change_type: str) -> str:
         f'<span class="sr-only"> {m["label"]}</span>'
     )
 
-
 def _cell_content(text: str | None, aria_label: str) -> str:
     if not text or not text.strip():
         return f'<pre aria-label="{aria_label}: empty" style="color:#4a4f6a;font-style:italic;">(empty)</pre>'
+    
     escaped = html_lib.escape(text)
-    truncated = len(text) > _MAX_CHARS
-    display = escaped[:_MAX_CHARS] if truncated else escaped
-    suffix = '<span style="color:#4f9cf9;font-size:0.8em;"> …[truncated]</span>' if truncated else ""
-    return f'<pre aria-label="{aria_label}" style="margin:0;white-space:pre-wrap;word-break:break-word;">{display}{suffix}</pre>'
-
+    
+    if len(text) <= _MAX_CHARS:
+        return f'<pre aria-label="{aria_label}" style="margin:0;white-space:pre-wrap;word-break:break-word;">{escaped}</pre>'
+    
+    # Use natively accessible <details> element for truncation
+    visible_part = escaped[:_MAX_CHARS]
+    hidden_part = escaped[_MAX_CHARS:]
+    
+    return f'''
+    <div aria-label="{aria_label}">
+        <pre style="margin:0;white-space:pre-wrap;word-break:break-word;display:inline;">{visible_part}</pre>
+        <details style="display:inline-block; margin-top:4px;">
+            <summary style="cursor:pointer; color:#4f9cf9; font-size:0.85em; font-weight:600; outline-offset:2px;">
+                ...more
+            </summary>
+            <pre style="margin:4px 0 0 0;white-space:pre-wrap;word-break:break-word; border-left:2px solid #4f9cf9; padding-left:8px;">{hidden_part}</pre>
+        </details>
+    </div>
+    '''
 
 def _kw_tags(keywords: list) -> str:
     if not keywords:
@@ -129,23 +143,23 @@ def render_diff_viewer(result: dict, risk_filter: str = "none"):
 
     # ── Pagination ────────────────────────────────────────────────────────────
     total = len(visible_chunks)
+    
+    # Calculate pages first
+    total_pages = max(1, (total + _PAGE_SIZE - 1) // _PAGE_SIZE)
+
     if "diff_page" not in st.session_state:
+        st.session_state.diff_page = 0
+        
+    # CRITICAL FIX: Reset page if the filter reduced the total pages below current index
+    if st.session_state.diff_page >= total_pages:
         st.session_state.diff_page = 0
 
     page = st.session_state.diff_page
     start = page * _PAGE_SIZE
     end = min(start + _PAGE_SIZE, total)
     page_chunks = visible_chunks[start:end]
-    total_pages = (total + _PAGE_SIZE - 1) // _PAGE_SIZE
 
-    st.markdown(
-        f'<p role="status" aria-live="polite" style="font-size:0.88rem;color:#8b90a8;">'
-        f'Showing changes {start+1}–{end} of <strong>{total}</strong> '
-        f'(risk ≥ <strong>{risk_filter.upper()}</strong>)'
-        f'</p>',
-        unsafe_allow_html=True,
-    )
-
+    
     # ── Diff table ────────────────────────────────────────────────────────────
     old_fname = html_lib.escape(result.get("old_filename", "Old Document"))
     new_fname = html_lib.escape(result.get("new_filename", "New Document"))

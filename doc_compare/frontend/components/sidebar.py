@@ -23,15 +23,8 @@ _LANG_NATIVE = {
     "de": "Deutsch",
 }
 
-
 def render_sidebar() -> dict:
     with st.sidebar:
-        # Sidebar landmark
-        st.markdown(
-            '<nav role="navigation" aria-label="Configuration filters">',
-            unsafe_allow_html=True,
-        )
-
         st.markdown(
             '<h2 style="font-size:1.1rem;margin-bottom:4px;">⚙️ Configuration</h2>',
             unsafe_allow_html=True,
@@ -101,6 +94,7 @@ def render_sidebar() -> dict:
             unsafe_allow_html=True,
         )
 
+        # FIX: Removed label_visibility="collapsed" to ensure a visible label
         language = st.selectbox(
             "Language for AI responses",
             options=list(LANGUAGES.keys()),
@@ -110,7 +104,6 @@ def render_sidebar() -> dict:
                 "The regulatory impact analysis and Q&A answers will be written in this language. "
                 "Document parsing and diff computation are language-independent."
             ),
-            label_visibility="collapsed",
         )
 
         # ── Risk filter ───────────────────────────────────────────────────────
@@ -165,14 +158,12 @@ def render_sidebar() -> dict:
 
         with st.expander("ℹ️ About", expanded=False):
             st.caption(
-                "DocCompare Agent v1.0\n\n"
+                "DocCompare Agent v2.0\n\n"
                 "Supported formats: PDF, TXT, CSV, JSON, DOCX, XLSX, PPTX\n\n"
                 "All PII masked before AI analysis. "
                 "Regulatory analysis grounded in document content — "
                 "no regulation names are hallucinated."
             )
-
-        st.markdown("</nav>", unsafe_allow_html=True)
 
     return {
         "api_url": api_url,
