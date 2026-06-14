@@ -3,6 +3,13 @@ from pathlib import Path
 from typing import List
 from pydantic import Field
 from pydantic_settings import BaseSettings
+from dotenv import load_dotenv
+
+
+print("Loading configuration settings...")
+print(f"Current working directory: {os.getcwd()}")
+print("Environment variables: " , load_dotenv() and "Loaded .env file successfully." or "No .env file found, relying on system environment variables.")
+load_dotenv = True  # Automatically load .env file if present
 
 class Settings(BaseSettings):
     APP_ENV: str = "production"
@@ -15,10 +22,11 @@ class Settings(BaseSettings):
     SESSION_CACHE_DIR: Path = Field(default_factory=lambda: Path("/tmp/doccompare/sessions"))
     MAX_FILE_SIZE_MB: int = 50
 
-    OPENAI_API_KEY: str = Field(default="")
+    OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
     LLM_MODEL: str = "gpt-4o-mini"
     LLM_MAX_TOKENS: int = 1024
     LLM_TEMPERATURE: float = 0.0
+    EMBEDDING_MODEL: str = "Qwen-VL-2B"
 
     PII_MASK_TOKEN: str = "[REDACTED]"
     SPACY_MODEL_DEFAULT: str = "en_core_web_sm"

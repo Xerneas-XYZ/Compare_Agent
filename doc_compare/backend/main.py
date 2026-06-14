@@ -3,7 +3,8 @@ import uuid
 import secrets
 import json
 import logging
-import fcntl
+import tempfile
+import portalocker
 from pathlib import Path
 from datetime import datetime
 from fastapi import FastAPI, UploadFile, File, HTTPException, Depends
@@ -13,7 +14,7 @@ from fastapi.responses import Response, JSONResponse
 from pydantic import BaseModel, Field
 
 from app.core.config import settings
-from app.core.registry import get_agencies, ROLE_PERMISSIONS
+from app.core.compliance_registry import get_agencies, ROLE_PERMISSIONS
 from app.pii.masker import full_mask
 from app.diff.engine import compute_diff
 from app.rag.engine import SafeRAGEngine, validate_and_ground
@@ -21,29 +22,32 @@ from app.rag.engine import SafeRAGEngine, validate_and_ground
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+logger.info("Starting Document Comparison API...")
+
 app = FastAPI(title="Document Comparison Framework", version="2.0.0")
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.add_middleware(CORSMiddleware, allow_origins=settings.ALLOWED_ORIGINS, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 rag_engine = SafeRAGEngine()
 
-# --- ATOMIC SECURED STORAGE UTILITIES ---
+# --- ATOMIC SECURED STORAGE UTILITIES -
+def write_session_locked(session_id: str, payload: dict):
+    target = settings.SESSION_CACHE_DIR / f"{session_id}.json"
+    with open(target, "w", encoding="utf-8") as f:
+        # FIX: Use LOCK_EX for writing to prevent corruption
+        portalocker.lock(f, portalocker.LOCK_EX)
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+        portalocker.lock(f, portalocker.LOCK_UN)
+
 def read_session_locked(session_id: str) -> dict:
     target = settings.SESSION_CACHE_DIR / f"{session_id}.json"
     if not target.exists():
         raise HTTPException(404, "Session record context missing.")
     with open(target, "r", encoding="utf-8") as f:
-        fcntl.flock(f.fileno(), fcntl.LOCK_SH)
+        portalocker.lock(f, portalocker.LOCK_SH)
         data = json.load(f)
-        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        portalocker.lock(f, portalocker.LOCK_UN)
         return data
-
-def write_session_locked(session_id: str, payload: dict):
-    target = settings.SESSION_CACHE_DIR / f"{session_id}.json"
-    with open(target, "w", encoding="utf-8") as f:
-        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-        json.dump(payload, f, ensure_ascii=False, indent=2)
-        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
 # --- REQUEST SCHEMAS ---
 class CompareInbound(BaseModel):
@@ -56,18 +60,20 @@ class CompareInbound(BaseModel):
 
 class QueryInbound(BaseModel):
     question: str = Field(..., min_length=5, max_length=500)
+    language: str = Field(default="en")  # FIX: Support translated Q&A queries
 
 # --- API ROUTERS ---
 @app.get("/api/v1/health")
 def liveness():
     return {"status": "ok", "timestamp": datetime.utcnow().isoformat()}
 
-# Insert this updated segment directly into your app/main.py orchestration routers
-
 @app.post("/api/v1/upload")
 async def receive_stream(file: UploadFile = File(...)):
     sfx = Path(file.filename or "").suffix.lower()
-    if sfx not in (".pdf", ".docx"):
+    
+    # Optional: expand this if you are using other formats. 
+    # Currently Docling handles pdf and docx best in our pipeline.
+    if sfx not in (".pdf", ".docx", ".txt", ".json", ".csv"):
         raise HTTPException(400, "Invalid file format extension.")
     
     with tempfile.NamedTemporaryFile(delete=False, suffix=sfx) as local_tmp:
@@ -75,43 +81,48 @@ async def receive_stream(file: UploadFile = File(...)):
         local_path = Path(local_tmp.name)
         
     try:
-        # We process ingestion but do not compute flat layout arrays here anymore
-        # Instead, we hand parsing off to the dynamic chunk manager
-        return {"temp_filepath": str(local_path), "filename": file.filename, "suffix": sfx}
+        # 1. Generate the unique ID the frontend expects
+        doc_id = str(uuid.uuid4())
+        
+        # 2. Save the metadata mapping to disk so /compare can locate the physical temp file later
+        meta_path = settings.UPLOAD_DIR / f"{doc_id}.json"
+        with open(meta_path, "w", encoding="utf-8") as out:
+            json.dump({
+                "doc_id": doc_id,
+                "filename": file.filename, 
+                "temp_filepath": str(local_path), 
+                "suffix": sfx
+            }, out, ensure_ascii=False)
+            
+        # 3. Return the exact schema the Streamlit APIClient needs
+        return {"doc_id": doc_id, "filename": file.filename}
+        
     except Exception as err:
+        # Cleanup the temp file if the JSON write fails
         local_path.unlink(missing_ok=True)
         raise HTTPException(500, f"Streaming write phase failure: {err}")
 
 @app.post("/api/v1/compare")
 async def execute_compare(req: CompareInbound):
-    # To run this robustly, our ingestion and comparison can merge into a single transaction block 
-    # taking file references out of the validation space, or resolving the paths directly.
-    # Here we parse old and new documents directly using the enhanced layout manager:
-    
     try:
-        from app.parsers.pipeline import chunk_isolated_ingest
+        from app.rag.pipeline import chunk_isolated_ingest
         
-        # Resolve files out of localized target cache definitions
         old_path = settings.UPLOAD_DIR / f"{req.old_doc_id}.json"
         new_path = settings.UPLOAD_DIR / f"{req.new_doc_id}.json"
         
-        # Load raw file payloads out of the standard upload path definitions
         with open(old_path, "r") as f: old_meta = json.load(f)
         with open(new_path, "r") as f: new_meta = json.load(f)
         
-        # Write temporary physical handles to process through Docling Core sequential page loop
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as o_tmp, \
-             tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as n_tmp:
-             
-             # Simulating resolving file buffers to physical blocks for Docling core parsing mapping
-             o_path = Path(o_tmp.name)
-             n_path = Path(n_tmp.name)
+        # Load the physical file paths generated during the upload phase
+        o_path = Path(old_meta["temp_filepath"])
+        n_path = Path(new_meta["temp_filepath"])
         
-        # For execution reliability, let's assume raw text properties passed directly into index spaces:
-        old_struct_chunks = chunk_isolated_ingest(o_path, ".pdf", "OLD")
-        new_struct_chunks = chunk_isolated_ingest(n_path, ".pdf", "NEW")
+        print(f"Comparing documents: {o_path} vs {n_path}")
+        print(f"========================== Old doc metadata started =======================" )
+        old_struct_chunks = chunk_isolated_ingest(o_path, old_meta["suffix"], "OLD")
+        print(f"========================== New doc metadata started =======================" )
+        new_struct_chunks = chunk_isolated_ingest(n_path, new_meta["suffix"], "NEW")
         
-        # Compute exact structural line diffs using structural strings
         old_flat_text = "\n".join([c["text"] for c in old_struct_chunks])
         new_flat_text = "\n".join([c["text"] for c in new_struct_chunks])
         
@@ -120,22 +131,37 @@ async def execute_compare(req: CompareInbound):
         
         diff_data = compute_diff(masked_old.masked_text, masked_new.masked_text)
         
-        # Step 1: Save explicitly tagged metrics into FAISS vector cache
         pair_id = rag_engine.build_index_from_structural_chunks(old_struct_chunks, new_struct_chunks)
         
-        # Steps 2, 3, 4: Execute dynamic orchestrated fusion lookup analysis
         query_context = {"country": req.country, "industry": req.industry, "role": req.role, "language": req.language}
         prompt_str = f"Identify all major changes. Compare parallel metrics. What are the key regulatory compliance implications?"
         
         analysis = rag_engine.load_align_and_compare(pair_id, prompt_str, query_context)
         
+        # FIX: Apply strict trigram grounding validation
+        ground_metrics = validate_and_ground(analysis["answer"], analysis.get("sources", []))
+        
         session_id = secrets.token_hex(16)
+        
+        # FIX: Build complete payload required by the Streamlit UI
         payload = {
             "session_id": session_id, "pair_id": pair_id,
             "old_filename": old_meta.get("filename", "Old Policy"), "new_filename": new_meta.get("filename", "New Policy"),
             "similarity_score": diff_data.similarity_score, "diff_summary": diff_data.summary,
-            "regulatory_impact": {"answer": analysis["answer"], "confidence": 1.0},
-            "compliance_context": {"country": req.country, "industry": req.industry, "role": req.role, **get_agencies(req.country, req.industry)}
+            "regulatory_impact": {
+                "answer": analysis["answer"], 
+                "confidence": ground_metrics["confidence"],
+                "sources": analysis.get("sources", []),
+                "tokens_used": analysis.get("tokens_used", 0)
+            },
+            "diff_chunks": [vars(c) for c in diff_data.chunks],
+            "pii_stats": {
+                "old_doc_redactions": masked_old.redaction_count, 
+                "new_doc_redactions": masked_new.redaction_count
+            },
+            "compliance_context": {
+                "country": req.country, "industry": req.industry, "role": req.role, **get_agencies(req.country, req.industry)
+            }
         }
         
         write_session_locked(session_id, payload)
@@ -150,9 +176,18 @@ async def execute_compare(req: CompareInbound):
 async def execute_query(session_id: str, req: QueryInbound):
     session = read_session_locked(session_id)
     ctx = session["compliance_context"]
+    ctx["language"] = req.language
     
-    analysis = rag_engine.load_and_query(session["pair_id"], req.question, ctx)
-    return {"answer": analysis["answer"], "sources": analysis["sources"]}
+    # FIX: Use correct Extract-Align RAG method and apply grounding calculation
+    analysis = rag_engine.load_align_and_compare(session["pair_id"], req.question, ctx)
+    ground_metrics = validate_and_ground(analysis["answer"], analysis.get("sources", []))
+    
+    return {
+        "answer": analysis["answer"], 
+        "sources": analysis.get("sources", []),
+        "tokens_used": analysis.get("tokens_used", 0),
+        "grounding_confidence": ground_metrics["confidence"]
+    }
 
 @app.get("/api/v1/export/{session_id}/pdf")
 async def generate_pdf_report(session_id: str):

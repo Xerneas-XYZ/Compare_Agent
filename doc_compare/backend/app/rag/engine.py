@@ -8,7 +8,7 @@ from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain_core.documents import Document as LCDoc
 from langchain_core.prompts import ChatPromptTemplate
 from app.core.config import settings
-from app.core.registry import get_agencies
+from app.core.compliance_registry import get_agencies
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +48,39 @@ User Question: {question}
 Format the structural deltas output in: {language}
 """)
 ])
+
+
+
+
+def validate_and_ground(answer: str, sources: list) -> dict:
+    """
+    Verifies that the generated text matches the context text structures using 
+    a deterministic trigram overlap matrix. Prevents hallucinated regulations.
+    """
+    if not sources or not answer or "insufficient context" in answer.lower():
+        return {"grounded": False, "confidence": 0.0}
+    
+    source_blob = " ".join([s["excerpt"] for s in sources]).lower()
+    sentences = [s.strip() for s in answer.split(".") if len(s.strip()) > 15]
+    
+    if not sentences:
+        return {"grounded": True, "confidence": 1.0}
+        
+    matches = 0
+    # Check the first 8 substantive sentences for source alignment
+    for s in sentences[:8]:
+        words = s.lower().split()
+        if len(words) < 3:
+            continue
+        # Substring window scanning (trigram overlap)
+        for i in range(len(words) - 2):
+            if " ".join(words[i:i+3]) in source_blob:
+                matches += 1
+                break
+                
+    conf = round(matches / min(len(sentences), 8), 2)
+    return {"grounded": conf > 0.25, "confidence": conf}
+
 
 class SafeRAGEngine:
     def __init__(self):

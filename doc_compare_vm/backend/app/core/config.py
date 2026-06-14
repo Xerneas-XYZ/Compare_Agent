@@ -21,7 +21,7 @@ class Settings(BaseSettings):
 
     # ── LLM ──────────────────────────────────────────────────────────────────
     OPENAI_API_KEY: str = ""
-    LLM_MODEL: str = "gpt-4o-mini"          # cheaper default; override with gpt-4o for prod
+    LLM_MODEL: str = "gpt-4o"          # cheaper default; override with gpt-4o for prod
     LLM_MAX_TOKENS: int = 2048
     LLM_TEMPERATURE: float = 0.0            # deterministic for compliance analysis
     CHUNK_SIZE: int = 800                   # token-optimised chunk size

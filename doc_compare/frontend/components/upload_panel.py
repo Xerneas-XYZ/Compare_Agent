@@ -87,10 +87,11 @@ def _handle_upload(file, slot: str, client):
     # CRITICAL SECURITY FIX: Double-check that we actually have a valid ID cached 
     # to prevent cross-widget pipeline contamination on multi-file reruns.
     if st.session_state.get(hash_key) == content_hash and st.session_state.get(id_key) is not None:
+        # Content changed — invalidate any previous comparison immediately
+        _invalidate_comparison()
         return
 
-    # Content changed — invalidate any previous comparison immediately
-    _invalidate_comparison()
+    
 
     try:
         with st.spinner(f"Uploading {file.name} to backend..."):
@@ -125,8 +126,8 @@ def render_upload_panel(client, config):
         elif hasattr(client, "api_url"):
             client.api_url = config["api_url"]
 
-    if client.is_mock:
-        _demo_banner()
+    # if client.is_mock:
+        # _demo_banner()
 
     # FIX: Replaced broken HTML tags with a native Streamlit container
     with st.container():
